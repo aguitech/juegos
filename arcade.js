@@ -15,7 +15,7 @@ const ctx = $('stage').getContext('2d');
 const video = document.querySelector('video');
 const W=960, H=540;
 const pointer={x:480,y:270}, keys=new Set();
-let down=false, tap=false, selected=0, game, detector, stream, body, lastPose=0, lastFrame=0, audio;
+let down=false, tap=false, selected=0, game, detector, stream, body, lastPose=0, lastFrame, audio;
 const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
 const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
 const rand=(a,b)=>a+Math.random()*(b-a);
@@ -236,7 +236,7 @@ const modes=[
 function randLine(t){return 160+(t/2)*540}
 function frame(now){
   requestAnimationFrame(frame);
-  const dt=Math.min(.05,(now-lastFrame)/1000);lastFrame=now;pose(now);
+  const dt=clamp((now-(lastFrame??now))/1000,0,.05);lastFrame=now;pose(now);
   pointer.x=clamp(pointer.x+(Number(keys.has('ArrowRight'))-Number(keys.has('ArrowLeft')))*420*dt,0,W);
   pointer.y=clamp(pointer.y+(Number(keys.has('ArrowDown'))-Number(keys.has('ArrowUp')))*420*dt,0,H);
   const grad=ctx.createLinearGradient(0,0,W,H);grad.addColorStop(0,'#111323');grad.addColorStop(1,'#272139');
