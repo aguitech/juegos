@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Espejos Locos · Aguitech Arcade</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#100b1c;color:#fff7ec;font:16px system-ui}main{max-width:1000px;margin:auto;padding:24px}a{color:#eaff8d}h1{margin:12px 0;font-size:clamp(46px,10vw,100px);line-height:.95;letter-spacing:-.085em;color:#ffd2f0}p{color:#d8cbe8}.stage{position:relative;border:1px solid #765b88;border-radius:25px;overflow:hidden;background:#221531}canvas{width:100%;display:block;touch-action:pan-y}.meter{position:absolute;inset:16px 16px auto;display:flex;justify-content:space-between;pointer-events:none}.meter span{background:#160f22e8;border-radius:50px;padding:8px 13px}.bar,.slider{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;margin:14px 0}button,select{font:inherit;color:inherit;background:#291b3a;border:1px solid #775d89;border-radius:12px;padding:10px 15px;cursor:pointer}button:disabled,select:disabled{opacity:.48;cursor:default}.primary{background:#eaff8d;color:#171025;font-weight:800}button:focus-visible,select:focus-visible{outline:3px solid #f7b7ef}label{display:flex;align-items:center;gap:8px}input{accent-color:#eaff8d;max-width:120px}#status{text-align:center;min-height:24px}video{display:none}
+</style>
+<main><a href="../">← Aguitech Arcade</a><h1>Espejos Locos</h1><p>Desliza sobre el espejo o usa las flechas para cambiar de efecto.</p>
+<div class="stage"><canvas width="960" height="540" aria-label="Espejo con distorsión en vivo"></canvas><div class="meter"><span id="count"></span><span id="timer" hidden></span></div></div>
+<div class="slider"><button id="prev" aria-label="Espejo anterior">←</button><select id="effect" aria-label="Tipo de espejo"></select><button id="next" aria-label="Espejo siguiente">→</button><label>Intensidad <input id="strength" type="range" min="0" max="100" value="75"></label></div>
+<div class="bar"><button id="camera" class="primary">Activar cámara</button><button id="photo" disabled>Tomar foto</button><button id="record" disabled>Grabar video</button></div>
+<p id="status" role="status">Activa la cámara para verte en el espejo.</p><video muted playsinline></video></main>
+<script type="module">
+const $=id=>document.getElementById(id);
+const canvas=document.querySelector('canvas'), video=document.querySelector('video');
+const gl=canvas.getContext('webgl',{preserveDrawingBuffer:true});
+const effects=['Inflado','Estirado','Cabeza gigante','Cabeza mini','Hombros enormes','Cintura de avispa','Piernas infinitas','Piernas cortitas','Modo gigante','Figura comprimida','Ola horizontal','Ola vertical','Gelatina','Ojo de pez','Túnel','Remolino','Remolino doble','Gemelo izquierdo','Gemelo derecho','Calidoscopio'];
+effects.forEach((name,i)=>$('effect').add(new Option(name,i)));
+let index=0, stream, recorder, chunks=[], timeout, ticker, started, swipe, draw;
+function choose(i){index=(i+effects.length)%effects.length;$('effect').value=index;$('count').textContent=(index+1)+' / '+effects.length}
+choose(0);
+$('prev').onclick=()=>choose(index-1);$('next').onclick=()=>choose(index+1);
+$('effect').onchange=e=>choose(Number(e.target.value));
+window.addEventListener('keydown',e=>{
+ if(e.target.matches('select,input')||!['ArrowLeft','ArrowRight'].includes(e.key))return;
+ e.preventDefault();choose(index+(e.key==='ArrowLeft'?-1:1));
+});
+canvas.onpointerdown=e=>{swipe=e.clientX;canvas.setPointerCapture(e.pointerId)};
+canvas.onpointerup=e=>{if(swipe!==undefined&&Math.abs(e.clientX-swipe)>35)choose(index+(e.clientX<swipe?1:-1));swipe=undefined};
+canvas.onpointercancel=()=>{swipe=undefined};
+const vertex='attribute vec2 p; varying vec2 uv; void main(){uv=p*.5+.5;gl_Position=vec4(p,0.,1.);}';
+const fragment=`
+precision mediump float;
+varying vec2 uv;
+uniform sampler2D camera;
+uniform float amount,time,ready;
+uniform int mode;
+uniform vec2 crop;
+float bump(float x,float c,float width){float v=(x-c)/width;return exp(-v*v);}
+vec2 rotate(vec2 p,float a){return mat2(cos(a),sin(a),-sin(a),cos(a))*p;}
+void main(){
+ vec2 p=vec2(uv.x,1.-uv.y)-.5, q=p;
+ float s=amount, r=length(p), turn=sin(time*2.);
+ if(mode==0)q.x/=1.+1.4*s;
+ if(mode==1)q.x*=1.+1.1*s;
+ if(mode==2)q/=1.+1.35*s*bump(p.y,-.26,.22);
+ if(mode==3)q.x*=1.+1.5*s*bump(p.y,-.26,.2);
+ if(mode==4)q.x/=1.+1.8*s*bump(p.y,-.13,.13);
+ if(mode==5)q.x*=1.+2.3*s*bump(p.y,.04,.14);
+ if(mode==6)q.y=p.y/(1.+1.8*s*smoothstep(-.08,.45,p.y));
+ if(mode==7)q.y=p.y*(1.+1.1*s*smoothstep(-.08,.45,p.y));
+ if(mode==8)q.y/=1.+1.1*s;
+ if(mode==9)q.y*=1.+.9*s;
+ if(mode==10)q.x+=.1*s*sin(p.y*21.+time*2.);
+ if(mode==11)q.y+=.09*s*sin(p.x*20.+time*2.);
+ if(mode==12)q*=1.+.4*s*sin(17.*r-time*4.);
+ if(mode==13)q*=1.-.68*s*exp(-8.*r*r);
+ if(mode==14)q*=1.+1.8*s*exp(-8.*r*r);
+ if(mode==15)q=rotate(p,3.9*s*exp(-5.*r));
+ if(mode==16){vec2 c=vec2(sign(p.x)*.24,0.);q=c+rotate(p-c,sign(p.x)*5.*s*exp(-7.*length(p-c)));}
+ if(mode==17)q.x=mix(p.x,-abs(p.x),s);
+ if(mode==18)q.x=mix(p.x,abs(p.x),s);
+ if(mode==19){float a=atan(p.y,p.x); float f=abs(mod(a+time*.15,1.0472)-.5236);q=mix(p,r*vec2(cos(f),sin(f)),s);}
+ vec2 sampleUV=vec2(-q.x,q.y)*crop+.5;
+ vec3 c=texture2D(camera,clamp(sampleUV,.001,.999)).rgb;
+ if(ready<.5){float bands=sin(24.*length(q*vec2(1.35,1.))+turn);
+ c=mix(vec3(.10,.06,.18),vec3(.66,.20,.48),smoothstep(-1.,1.,bands)*.65);}
+ gl_FragColor=vec4(c,1.);
+}`;
+function setup(){
+ if(!gl)throw Error('Este navegador necesita WebGL para aplicar los espejos.');
+ function shader(type,source){
+  const sh=gl.createShader(type);gl.shaderSource(sh,source);gl.compileShader(sh);
+  if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(sh));return sh;
+ }
+ const program=gl.createProgram();
+ gl.attachShader(program,shader(gl.VERTEX_SHADER,vertex));gl.attachShader(program,shader(gl.FRAGMENT_SHADER,fragment));gl.linkProgram(program);
+ if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(program));
+ gl.useProgram(program);
+ const points=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,points);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+ const position=gl.getAttribLocation(program,'p');gl.enableVertexAttribArray(position);gl.vertexAttribPointer(position,2,gl.FLOAT,false,0,0);
+ const tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);
+ gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([0,0,0,255]));
+ for(const [key,value] of [[gl.TEXTURE_MIN_FILTER,gl.LINEAR],[gl.TEXTURE_MAG_FILTER,gl.LINEAR],[gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE]])gl.texParameteri(gl.TEXTURE_2D,key,value);
+ const uniforms=Object.fromEntries(['amount','time','ready','mode','crop'].map(name=>[name,gl.getUniformLocation(program,name)]));
+ return function frame(now){
+  const live=Boolean(stream&&video.readyState>=2);
+  if(live)gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,video);
+  const ratio=live?(video.videoWidth/video.videoHeight)/(canvas.width/canvas.height):1;
+  gl.uniform2f(uniforms.crop,Math.min(1,1/ratio),Math.min(1,ratio));
+  gl.uniform1f(uniforms.amount,Number($('strength').value)/100);gl.uniform1f(uniforms.time,now/1000);
+  gl.uniform1f(uniforms.ready,Number(live));gl.uniform1i(uniforms.mode,index);
+  gl.drawArrays(gl.TRIANGLE_STRIP,0,4);requestAnimationFrame(frame);
+ };
+}
+try{draw=setup();requestAnimationFrame(draw)}catch(e){$('status').textContent=e.message;$('camera').disabled=true}
+function stopCamera(){
+ if(recorder?.state==='recording')recorder.stop();
+ stream?.getTracks().forEach(track=>track.stop());stream=null;video.srcObject=null;
+ $('camera').textContent='Activar cámara';$('photo').disabled=true;$('record').disabled=true;
+}
+$('camera').onclick=async()=>{
+ if(stream){stopCamera();$('status').textContent='Cámara apagada.';return}
+ $('camera').disabled=true;
+ try{
+  if(!navigator.mediaDevices?.getUserMedia)throw Error('Abre esta página en HTTPS o localhost.');
+  stream=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1280},height:{ideal:720}},audio:false});
+  stream.getVideoTracks()[0].addEventListener('ended',()=>{stopCamera();$('status').textContent='La cámara se desconectó.'});
+  video.srcObject=stream;await video.play();
+  $('camera').textContent='Apagar cámara';$('photo').disabled=false;
+  const canRecord=Boolean(canvas.captureStream&&window.MediaRecorder);
+  $('record').disabled=!canRecord;
+  $('status').textContent=canRecord?'Cámara activa. Cambia de espejo incluso durante la grabación.':'Cámara activa. Este navegador solo permite capturar fotos.';
+ }catch(e){stopCamera();$('status').textContent=e.message}
+ finally{$('camera').disabled=false}
+};
+function save(blob,ext){
+ const url=URL.createObjectURL(blob), a=document.createElement('a');
+ a.href=url;a.download='espejos-locos-'+Date.now()+'.'+ext;
+ document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
+}
+$('photo').onclick=()=>canvas.toBlob(blob=>{
+ if(blob){save(blob,'png');$('status').textContent='Foto descargada.'}
+},'image/png');
+$('record').onclick=()=>{
+ if(recorder){if(recorder.state==='recording')recorder.stop();return}
+ const capture=canvas.captureStream(30);
+ try{
+  const type=['video/webm;codecs=vp9','video/webm;codecs=vp8','video/mp4'].find(t=>MediaRecorder.isTypeSupported(t));
+  recorder=new MediaRecorder(capture,type?{mimeType:type}:undefined);
+  chunks=[];
+  recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
+  recorder.onstop=()=>{
+   clearTimeout(timeout);clearInterval(ticker);capture.getTracks().forEach(t=>t.stop());
+   $('record').textContent='Grabar video';$('timer').hidden=true;
+   const mime=recorder.mimeType||chunks[0]?.type||'video/webm';
+   recorder=null;
+   if(chunks.length){save(new Blob(chunks,{type:mime}),mime.includes('mp4')?'mp4':'webm');$('status').textContent='Video descargado.'}
+   else $('status').textContent='No se pudo guardar el video.';
+  };
+  recorder.start(250);started=Date.now();
+  $('record').textContent='Detener y descargar';$('timer').hidden=false;$('timer').textContent='● 0 s';
+  ticker=setInterval(()=>$('timer').textContent='● '+Math.floor((Date.now()-started)/1000)+' s',250);
+  timeout=setTimeout(()=>{if(recorder.state==='recording')recorder.stop()},60000);
+ }catch(e){recorder=null;capture.getTracks().forEach(t=>t.stop());$('status').textContent=e.message}
+};
+window.addEventListener('pagehide',stopCamera);
+</script></html>
